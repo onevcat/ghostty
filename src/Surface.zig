@@ -39,6 +39,8 @@ const SurfaceMouse = @import("surface_mouse.zig");
 
 const log = std.log.scoped(.surface);
 
+extern "c" fn tcgetpgrp(fd: std.posix.fd_t) std.posix.pid_t;
+
 // The renderer implementation to use.
 const Renderer = rendererpkg.Renderer;
 
@@ -187,7 +189,8 @@ pub fn getForegroundProcessGroupId(self: *Surface) ?std.posix.pid_t {
     return switch (self.io.backend) {
         .exec => |exec| {
             const pty = exec.subprocess.pty orelse return null;
-            return std.posix.tcgetpgrp(pty.master) catch null;
+            const pgid = tcgetpgrp(pty.master);
+            return if (pgid > 0) pgid else null;
         },
     };
 }
