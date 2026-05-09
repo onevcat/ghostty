@@ -168,6 +168,18 @@ search: ?Search = null,
 /// Used to rate limit BEL handling.
 last_bell_time: ?std.time.Instant = null,
 
+/// Returns the PID for the surface child process when Ghostty owns a local
+/// fork/exec process and it has not exited yet.
+pub fn getChildPid(self: *Surface) ?std.posix.pid_t {
+    if (self.child_exited) return null;
+    return switch (self.io.backend) {
+        .exec => |exec| switch (exec.subprocess.process orelse return null) {
+            .fork_exec => |command| command.pid,
+            .flatpak => null,
+        },
+    };
+}
+
 /// The effect of an input event. This can be used by callers to take
 /// the appropriate action after an input event. For example, key
 /// input can be forwarded to the OS for further processing if it

@@ -1598,6 +1598,13 @@ pub const CAPI = struct {
         return surface.core_surface.child_exited;
     }
 
+    /// Returns the PID for the surface child process, or 0 if unknown.
+    export fn ghostty_surface_pid(surface_: ?*Surface) c_int {
+        const surface = surface_ orelse return 0;
+        const pid = surface.core_surface.getChildPid() orelse return 0;
+        return @intCast(pid);
+    }
+
     /// Returns true if the surface has a selection.
     export fn ghostty_surface_has_selection(surface: *Surface) bool {
         return surface.core_surface.hasSelection();
