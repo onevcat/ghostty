@@ -1605,6 +1605,13 @@ pub const CAPI = struct {
         return @intCast(pid);
     }
 
+    /// Returns the foreground process group ID for the surface pty, or 0 if unknown.
+    export fn ghostty_surface_foreground_process_group(surface_: ?*Surface) c_int {
+        const surface = surface_ orelse return 0;
+        const pgid = surface.core_surface.getForegroundProcessGroupId() orelse return 0;
+        return @intCast(pgid);
+    }
+
     /// Returns true if the surface has a selection.
     export fn ghostty_surface_has_selection(surface: *Surface) bool {
         return surface.core_surface.hasSelection();

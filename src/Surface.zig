@@ -180,6 +180,18 @@ pub fn getChildPid(self: *Surface) ?std.posix.pid_t {
     };
 }
 
+/// Returns the foreground process group ID for the surface pty when Ghostty
+/// owns a local fork/exec process and it has not exited yet.
+pub fn getForegroundProcessGroupId(self: *Surface) ?std.posix.pid_t {
+    if (self.child_exited) return null;
+    return switch (self.io.backend) {
+        .exec => |exec| {
+            const pty = exec.subprocess.pty orelse return null;
+            return std.posix.tcgetpgrp(pty.master) catch null;
+        },
+    };
+}
+
 /// The effect of an input event. This can be used by callers to take
 /// the appropriate action after an input event. For example, key
 /// input can be forwarded to the OS for further processing if it
