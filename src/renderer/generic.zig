@@ -115,6 +115,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// True if the window is focused
         focused: bool,
 
+        /// True if the window is visible.
+        visible: bool,
+
         /// Flag to indicate that our focus state changed for custom
         /// shaders to update their state.
         custom_shader_focused_changed: bool = false,
@@ -689,15 +692,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 };
             };
 
-            const display_link: ?DisplayLink = switch (builtin.os.tag) {
-                .macos => if (options.config.vsync)
-                    try macos.video.DisplayLink.createWithActiveCGDisplays()
-                else
-                    null,
-                else => null,
-            };
-            errdefer if (display_link) |v| v.release();
-
             var result: Self = .{
                 .alloc = alloc,
                 .config = options.config,
@@ -705,6 +699,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 .grid_metrics = font_critical.metrics,
                 .size = options.size,
                 .focused = true,
+                .visible = true,
                 .scrollbar = .zero,
                 .scrollbar_dirty = false,
                 .last_bottom_node = null,
@@ -783,7 +778,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // Graphics API stuff
                 .api = api,
                 .swap_chain = swap_chain,
-                .display_link = display_link,
             };
 
             try result.initShaders();
@@ -903,16 +897,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // If we don't support a display link we have no work to do.
             if (comptime DisplayLink == void) return;
 
-            // This is when we know our "self" pointer is stable so we can
-            // setup the display link. To setup the display link we set our
-            // callback and we can start it immediately.
-            const display_link = self.display_link orelse return;
-            try display_link.setOutputCallback(
-                xev.Async,
-                &displayLinkCallback,
-                &thr.draw_now,
-            );
-            display_link.start() catch {};
+            self.syncDisplayLink(null, &thr.draw_now);
         }
 
         /// Called by renderer.Thread when it exits the main loop.
@@ -999,13 +984,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         }
 
         /// Called when we get an updated display ID for our display link.
-        pub fn setMacOSDisplayID(self: *Self, id: u32) !void {
+        pub fn setMacOSDisplayID(
+            self: *Self,
+            id: u32,
+            draw_now: *xev.Async,
+        ) !void {
             if (comptime DisplayLink == void) return;
-            const display_link = self.display_link orelse return;
-            log.info("updating display link display id={}", .{id});
-            display_link.setCurrentCGDisplay(id) catch |err| {
-                log.warn("error setting display link display id err={}", .{err});
-            };
+            self.syncDisplayLink(id, draw_now);
         }
 
         /// True if our renderer has animations so that a higher frequency
@@ -1034,33 +1019,65 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Flag that we need to update our custom shaders
             self.custom_shader_focused_changed = true;
 
-            // If we're not focused, then we want to stop the display link
-            // because it is a waste of resources and we can move to pure
-            // change-driven updates.
-            if (comptime DisplayLink != void) link: {
-                const display_link = self.display_link orelse break :link;
-                if (focus) {
-                    display_link.start() catch {};
-                } else {
-                    display_link.stop() catch {};
-                }
-            }
+            self.syncDisplayLink(null, null);
         }
 
         /// Callback when the window is visible or occluded.
         ///
         /// Must be called on the render thread.
         pub fn setVisible(self: *Self, visible: bool) void {
-            // If we're not visible, then we want to stop the display link
-            // because it is a waste of resources and we can move to pure
+            self.visible = visible;
+            self.syncDisplayLink(null, null);
+        }
+
+        /// Create or update the display link and match it to the current
+        /// surface state. Creation is lazy and non-fatal: a session with no
+        /// active display (locked screen, display asleep) has no CVDisplayLink
+        /// to attach to, so rendering falls back to change-driven draws and a
+        /// later display update retries creation.
+        fn syncDisplayLink(
+            self: *Self,
+            display_id: ?u32,
+            draw_now: ?*xev.Async,
+        ) void {
+            if (comptime DisplayLink == void) return;
+
+            const display_link = self.display_link orelse display_link: {
+                if (!self.config.vsync) return;
+                const callback = draw_now orelse return;
+                const result = macos.video.DisplayLink.createWithActiveCGDisplays() catch |err| {
+                    log.warn("error creating display link; using fallback rendering err={}", .{err});
+                    return;
+                };
+                result.setOutputCallback(
+                    xev.Async,
+                    &displayLinkCallback,
+                    callback,
+                ) catch |err| {
+                    log.warn("error configuring display link err={}", .{err});
+                    result.release();
+                    return;
+                };
+
+                self.display_link = result;
+                log.info("created display link", .{});
+                break :display_link result;
+            };
+
+            if (display_id) |id| {
+                log.info("updating display link display id={}", .{id});
+                display_link.setCurrentCGDisplay(id) catch |err| {
+                    log.warn("error setting display link display id err={}", .{err});
+                };
+            }
+
+            // If we're not visible or focused, stop the display link because
+            // it is a waste of resources and we can move to pure
             // change-driven updates.
-            if (comptime DisplayLink != void) link: {
-                const display_link = self.display_link orelse break :link;
-                if (visible and self.focused) {
-                    display_link.start() catch {};
-                } else {
-                    display_link.stop() catch {};
-                }
+            if (self.visible and self.focused) {
+                display_link.start() catch {};
+            } else {
+                display_link.stop() catch {};
             }
         }
 
