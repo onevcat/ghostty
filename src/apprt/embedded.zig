@@ -1654,6 +1654,27 @@ pub const CAPI = struct {
         return readTextLocked(surface, core_sel, result);
     }
 
+    /// Snapshot the active screen without changing the local viewport or PTY.
+    export fn ghostty_surface_read_snapshot(surface: *Surface, result: *Text) bool {
+        const core = &surface.core_surface;
+        core.renderer_state.mutex.lock();
+        defer core.renderer_state.mutex.unlock();
+
+        const bytes = terminal.display_snapshot.alloc(global.alloc, &core.io.terminal) catch |err| {
+            log.warn("error reading display snapshot err={}", .{err});
+            return false;
+        };
+        result.* = .{
+            .tl_px_x = 0,
+            .tl_px_y = 0,
+            .offset_start = 0,
+            .offset_len = 0,
+            .text = bytes.ptr,
+            .text_len = bytes.len,
+        };
+        return true;
+    }
+
     fn readTextLocked(
         surface: *Surface,
         core_sel: terminal.Selection,

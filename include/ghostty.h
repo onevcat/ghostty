@@ -1133,6 +1133,16 @@ bool ghostty_surface_read_text(ghostty_surface_t,
                                ghostty_selection_s,
                                ghostty_text_s*);
 void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+// Export the current active screen as styled VT, excluding scrollback. This is
+// a display snapshot, not a complete terminal checkpoint (e.g. hyperlink URIs,
+// cursor shape and graphics are not preserved). The receiver must reset its
+// display baseline and use the host grid size before replaying the snapshot.
+// Call on the surface's owning thread, serialize with resize/destruction, and
+// throttle polling. Terminal state is locked for the duration of formatting.
+// On success, text is NUL-terminated, text_len excludes the terminator, and the
+// selection/offset fields are zero. Release with ghostty_surface_free_text.
+// On failure, the result is unchanged. This does not emit input or notifications.
+bool ghostty_surface_read_snapshot(ghostty_surface_t, ghostty_text_s*);
 
 #ifdef __APPLE__
 void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
