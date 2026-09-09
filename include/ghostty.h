@@ -1252,6 +1252,16 @@ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
 // On failure, the result is unchanged. This does not emit input or notifications.
 GHOSTTY_API bool ghostty_surface_read_snapshot(ghostty_surface_t, ghostty_text_s*);
 
+// Plain UTF-8 from ACTIVE or the most recent max_rows of the current SCREEN.
+// Limits: 1..10000 physical rows, 1..2097152 UTF-8 bytes. Formatting uses a
+// fixed buffer; exceeding the byte budget fails, without partial output.
+// ACTIVE must fit entirely. SCREEN reports omitted older rows via truncated.
+// Does not move the local viewport or send input. Same thread/lifetime and
+// ownership rules as read_snapshot. Both output arguments are unchanged on failure.
+GHOSTTY_API bool ghostty_surface_read_text_bounded(ghostty_surface_t, bool active_only,
+                                                   uint32_t max_rows, uintptr_t max_bytes,
+                                                   ghostty_text_s*, bool* truncated);
+
 #ifdef __APPLE__
 GHOSTTY_API void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
 GHOSTTY_API void* ghostty_surface_quicklook_font(ghostty_surface_t);
