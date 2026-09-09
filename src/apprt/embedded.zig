@@ -1675,6 +1675,36 @@ pub const CAPI = struct {
         return true;
     }
 
+    export fn ghostty_surface_read_text_bounded(
+        surface: *Surface,
+        active_only: bool,
+        max_rows: u32,
+        max_bytes: usize,
+        result: *Text,
+        truncated: *bool,
+    ) bool {
+        const core = &surface.core_surface;
+        core.renderer_state.mutex.lock();
+        defer core.renderer_state.mutex.unlock();
+        const captured = terminal.bounded_text.capture(
+            global.alloc,
+            &core.io.terminal,
+            active_only,
+            max_rows,
+            max_bytes,
+        ) catch return false;
+        result.* = .{
+            .tl_px_x = 0,
+            .tl_px_y = 0,
+            .offset_start = 0,
+            .offset_len = 0,
+            .text = captured.text.ptr,
+            .text_len = captured.text.len,
+        };
+        truncated.* = captured.truncated;
+        return true;
+    }
+
     fn readTextLocked(
         surface: *Surface,
         core_sel: terminal.Selection,
