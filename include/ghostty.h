@@ -1133,6 +1133,25 @@ bool ghostty_surface_read_text(ghostty_surface_t,
                                ghostty_selection_s,
                                ghostty_text_s*);
 void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+// Export the current active screen as styled VT, excluding scrollback. This is
+// a display snapshot, not a complete terminal checkpoint (e.g. hyperlink URIs,
+// cursor shape and graphics are not preserved). The receiver must reset its
+// display baseline and use the host grid size before replaying the snapshot.
+// Call on the surface's owning thread, serialize with resize/destruction, and
+// throttle polling. Terminal state is locked for the duration of formatting.
+// On success, text is NUL-terminated, text_len excludes the terminator, and the
+// selection/offset fields are zero. Release with ghostty_surface_free_text.
+// On failure, the result is unchanged. This does not emit input or notifications.
+bool ghostty_surface_read_snapshot(ghostty_surface_t, ghostty_text_s*);
+// Plain UTF-8 from ACTIVE or the most recent max_rows of the current SCREEN.
+// Limits: 1..10000 physical rows, 1..2097152 UTF-8 bytes. Formatting uses a
+// fixed buffer; exceeding the byte budget fails, without partial output.
+// ACTIVE must fit entirely. SCREEN reports omitted older rows via truncated.
+// Does not move the local viewport or send input. Same thread/lifetime and
+// ownership rules as read_snapshot. Both output arguments are unchanged on failure.
+bool ghostty_surface_read_text_bounded(ghostty_surface_t, bool active_only,
+                                      uint32_t max_rows, uintptr_t max_bytes,
+                                      ghostty_text_s*, bool* truncated);
 
 #ifdef __APPLE__
 void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
