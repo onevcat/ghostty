@@ -24,7 +24,9 @@ pub fn alloc(allocator: std.mem.Allocator, t: *Terminal) ![:0]u8 {
     // Keep the spike's display-specific subset rather than a full checkpoint.
     formatter.extra = .styles;
     formatter.extra.modes = true;
+    formatter.extra.keyboard = true;
     formatter.extra.screen.cursor = true;
+    formatter.extra.screen.kitty_keyboard = true;
     var writer: std.Io.Writer.Allocating = .init(allocator);
     defer writer.deinit();
     // An allocating writer can fail only when it cannot grow its buffer.
@@ -106,4 +108,82 @@ test "display snapshot excludes scrollback and handles allocation failure" {
             defer allocator.free(bytes);
         }
     }.run, .{&host});
+}
+
+test "display snapshot restores negotiated keyboard input after reset" {
+    const testing = std.testing;
+    const key_encode = @import("../input/key_encode.zig");
+    const KeyEvent = @import("../input/key.zig").KeyEvent;
+    var host = try Terminal.init(testing.allocator, .{ .cols = 20, .rows = 3 });
+    defer host.deinit(testing.allocator);
+    var source = host.vtStream();
+    defer source.deinit();
+    var client = try Terminal.init(testing.allocator, .{ .cols = 20, .rows = 3 });
+    defer client.deinit(testing.allocator);
+    var receiver = client.vtStream();
+    defer receiver.deinit();
+
+    const cases = .{
+        .{ "\x1b[>11u", KeyEvent{ .action = .release, .key = .enter }, "\x1b[13;1:3u" },
+        .{ "\x1b[>4;2m", KeyEvent{ .key = .key_h, .mods = .{ .ctrl = true, .shift = true }, .utf8 = "H" }, "\x1b[27;6;72~" },
+    };
+    inline for (cases) |case| {
+        try source.nextSlice("\x1bc");
+        try source.nextSlice(case[0]);
+        const frame = try alloc(testing.allocator, &host);
+        defer testing.allocator.free(frame);
+        try receiver.nextSlice("\x1bc");
+        try receiver.nextSlice(frame);
+        try testing.expectEqual(host.flags.modify_other_keys_2, client.flags.modify_other_keys_2);
+        try testing.expectEqual(host.screens.active.kitty_keyboard.current().int(), client.screens.active.kitty_keyboard.current().int());
+        var host_bytes: [128]u8 = undefined;
+        var client_bytes: [128]u8 = undefined;
+        var host_writer: std.Io.Writer = .fixed(&host_bytes);
+        var client_writer: std.Io.Writer = .fixed(&client_bytes);
+        try key_encode.encode(&host_writer, case[1], .fromTerminal(&host));
+        try key_encode.encode(&client_writer, case[1], .fromTerminal(&client));
+        try testing.expectEqualStrings(case[2], host_writer.buffered());
+        try testing.expectEqualStrings(host_writer.buffered(), client_writer.buffered());
+    }
+}
+
+test "display snapshot preserves background-only cells after reset" {
+    const testing = std.testing;
+    const RGB = @import("color.zig").RGB;
+    var host = try Terminal.init(testing.allocator, .{ .cols = 6, .rows = 3 });
+    defer host.deinit(testing.allocator);
+    var source = host.vtStream();
+    defer source.deinit();
+    var client = try Terminal.init(testing.allocator, .{ .cols = 6, .rows = 3 });
+    defer client.deinit(testing.allocator);
+    var receiver = client.vtStream();
+    defer receiver.deinit();
+
+    const updates = [_][]const u8{
+        "\x1b[41m\x1b[2J\x1b[0m",
+        "\x1b[2;1H\x1b[48;2;12;34;56m\x1b[2K\x1b[0m",
+    };
+    for (updates, 0..) |update, index| {
+        try source.nextSlice("\x1bc");
+        try source.nextSlice(update);
+        const frame = try alloc(testing.allocator, &host);
+        defer testing.allocator.free(frame);
+        try receiver.nextSlice("\x1bc");
+        try receiver.nextSlice(frame);
+        for (0..host.rows) |y| {
+            for (0..host.cols) |x| {
+                const point: @import("point.zig").Point = .{ .active = .{ .x = @intCast(x), .y = @intCast(y) } };
+                const expected: ?RGB = if (index == 0) host.colors.palette.current[1] else if (y == 1) .{ .r = 12, .g = 34, .b = 56 } else null;
+                const host_cell = host.screens.active.pages.getCell(point).?;
+                const client_cell = client.screens.active.pages.getCell(point).?;
+                try testing.expectEqualDeep(expected, host_cell.style().bg(host_cell.cell, &host.colors.palette.current));
+                try testing.expectEqualDeep(expected, client_cell.style().bg(client_cell.cell, &client.colors.palette.current));
+            }
+        }
+        var plain: TerminalFormatter = .init(&host, .{ .emit = .plain, .trim = true });
+        var plain_writer: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer plain_writer.deinit();
+        try plain.format(&plain_writer.writer);
+        try testing.expectEqualStrings("", plain_writer.writer.buffered());
+    }
 }

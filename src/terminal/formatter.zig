@@ -1041,7 +1041,14 @@ pub const PageFormatter = struct {
             // If this row is blank, accumulate to avoid a bunch of extra
             // work later. If it isn't blank, make sure we dump all our
             // blanks.
-            if (!Cell.hasTextAny(cells_subset)) {
+            const blank = if (self.opts.emit == .vt) blank: {
+                // Background-only cells still occupy the exported display.
+                for (cells_subset) |cell| {
+                    if (!cell.isEmpty() or cell.hasStyling()) break :blank false;
+                }
+                break :blank true;
+            } else !Cell.hasTextAny(cells_subset);
+            if (blank) {
                 blank_rows += 1;
                 continue;
             }
