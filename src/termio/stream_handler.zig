@@ -349,6 +349,7 @@ pub const StreamHandler = struct {
             .report_pwd => try self.reportPwd(value.url),
             .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
             .progress_report => self.progressReport(value),
+            .program_status => try self.programStatus(value),
             .start_hyperlink => try self.startHyperlink(value.uri, value.id),
             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
             .semantic_prompt => try self.semanticPrompt(value),
@@ -389,7 +390,6 @@ pub const StreamHandler = struct {
             .title_pop,
             .kitty_dnd,
             .osc_unknown,
-            .program_status,
             => {},
         }
     }
@@ -928,6 +928,12 @@ pub const StreamHandler = struct {
 
         // Clear the progress bar
         self.progressReport(.{ .state = .remove });
+
+        // A full reset removes every program status record.
+        self.surfaceMessageWriter(.{ .program_status = .{
+            .state = .clear,
+            .data = .{ .stable = "" },
+        } });
     }
 
     /// Record a Kitty clipboard protocol session grant so future
@@ -1926,6 +1932,33 @@ pub const StreamHandler = struct {
     /// Display a GUI progress report.
     fn progressReport(self: *StreamHandler, report: terminal.osc.Command.ProgressReport) void {
         self.surfaceMessageWriter(.{ .progress_report = report });
+    }
+
+    /// Answer the OSC 7501 support query and forward reports to the
+    /// surface, which keeps the records (see apprt.action.ProgramStatus).
+    fn programStatus(
+        self: *StreamHandler,
+        cmd: terminal.osc.Command.ProgramStatus,
+    ) !void {
+        switch (cmd) {
+            // The reply is the query itself with the same terminator.
+            // We always answer because the embedder consumes reports.
+            .query => |terminator| {
+                const reply_st: []const u8 = "\x1b]7501;?\x1b\\";
+                const reply_bel: []const u8 = "\x1b]7501;?\x07";
+                self.messageWriter(.{ .write_stable = switch (terminator) {
+                    .st => reply_st,
+                    .bel => reply_bel,
+                } });
+            },
+
+            // The report points into the parser buffer, so copy it
+            // before this returns.
+            .report => |report| self.surfaceMessageWriter(.{ .program_status = .{
+                .state = report.state,
+                .data = try apprt.surface.Message.WriteReq.init(self.alloc, report.data),
+            } }),
+        }
     }
 };
 

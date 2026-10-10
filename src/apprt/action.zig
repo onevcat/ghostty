@@ -364,6 +364,9 @@ pub const Action = union(Key) {
     /// split or the window is fullscreen.
     resize_window: ResizeWindow,
 
+    /// A program status report (OSC 7501) for the target terminal.
+    program_status: ProgramStatus,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -436,6 +439,7 @@ pub const Action = union(Key) {
         copy_title_to_clipboard,
         move_tab_to_new_window,
         resize_window,
+        program_status,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
@@ -795,6 +799,77 @@ pub const Pwd = struct {
         writer: *std.Io.Writer,
     ) !void {
         try writer.print("{s}{{ {s} }}", .{ @typeName(@This()), value.pwd });
+    }
+};
+
+/// A program status report (OSC 7501). The terminal keeps no records,
+/// the same as OSC 9;4: the apprt keeps one record per id and applies the
+/// protocol's lifetime rules. A full reset arrives as a `clear` report
+/// with an empty id. The strings are only valid during the action call.
+pub const ProgramStatus = struct {
+    report: *const Report,
+
+    pub const State = enum(c_int) {
+        idle,
+        working,
+        done,
+        blocked,
+        @"error",
+        clear,
+
+        test "ghostty.h ProgramStatus.State" {
+            try lib.checkGhosttyHEnum(State, "GHOSTTY_PROGRAM_STATUS_STATE_");
+        }
+    };
+
+    pub const Kind = enum(c_int) {
+        none,
+        permission,
+        question,
+        auth,
+
+        test "ghostty.h ProgramStatus.Kind" {
+            try lib.checkGhosttyHEnum(Kind, "GHOSTTY_PROGRAM_STATUS_KIND_");
+        }
+    };
+
+    // Sync with: ghostty_action_program_status_s
+    pub const Report = extern struct {
+        state: State,
+        /// Only set for `blocked`; `none` otherwise.
+        kind: Kind = .none,
+        /// 0 through 100, or -1 when the program sent none.
+        progress: i8 = -1,
+        /// Empty for the root record. A `/` makes a record the child of
+        /// another, so `build/test` is a child of `build`.
+        id: [*:0]const u8 = "",
+        app: [*:0]const u8 = "",
+        /// Decoded text. Untrusted, never NULL.
+        title: [*:0]const u8 = "",
+        message: [*:0]const u8 = "",
+    };
+
+    // The report is passed by pointer so the action union keeps its size.
+    pub const C = *const Report;
+
+    pub fn cval(self: ProgramStatus) C {
+        return self.report;
+    }
+
+    pub fn format(
+        value: @This(),
+        comptime _: []const u8,
+        _: std.fmt.Options,
+        writer: *std.Io.Writer,
+    ) !void {
+        try writer.print("{s}{{ state: {t}, kind: {t}, progress: {d}, id: {s}, app: {s} }}", .{
+            @typeName(@This()),
+            value.report.state,
+            value.report.kind,
+            value.report.progress,
+            value.report.id,
+            value.report.app,
+        });
     }
 };
 

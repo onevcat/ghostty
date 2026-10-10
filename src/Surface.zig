@@ -30,6 +30,7 @@ const termio = @import("termio.zig");
 const font = @import("font/main.zig");
 const Command = @import("Command.zig");
 const terminal = @import("terminal/main.zig");
+const program_status = @import("terminal/osc/parsers/program_status.zig");
 const configpkg = @import("config.zig");
 const Duration = configpkg.Config.Duration;
 const input = @import("input.zig");
@@ -991,6 +992,69 @@ pub fn needsConfirmQuit(self: *Surface) bool {
     };
 }
 
+/// Decode a program status report (OSC 7501) and hand it to the apprt as
+/// an action. The apprt keeps the records; `data` is the validated body.
+fn programStatus(
+    self: *Surface,
+    state: terminal.osc.Command.ProgramStatus.State,
+    data: []const u8,
+) !void {
+    const report: terminal.osc.Command.ProgramStatus.Report = .{
+        .state = state,
+        .data = data,
+    };
+
+    // The parser bounds every value, so these buffers always fit.
+    var id_buf: [program_status.max_id_bytes + 1]u8 = undefined;
+    var app_buf: [program_status.max_app_bytes + 1]u8 = undefined;
+    var title_buf: [program_status.max_title_bytes + 1]u8 = undefined;
+    var msg_buf: [program_status.max_msg_bytes + 1]u8 = undefined;
+
+    var title_writer: std.Io.Writer = .fixed(title_buf[0..program_status.max_title_bytes]);
+    try report.writeText(.title, &title_writer);
+    var msg_writer: std.Io.Writer = .fixed(msg_buf[0..program_status.max_msg_bytes]);
+    try report.writeText(.msg, &msg_writer);
+
+    const value: apprt.action.ProgramStatus.Report = .{
+        .state = switch (state) {
+            .idle => .idle,
+            .working => .working,
+            .done => .done,
+            .blocked => .blocked,
+            .@"error" => .@"error",
+            .clear => .clear,
+        },
+        .kind = if (report.readOption(.kind)) |kind| switch (kind) {
+            .permission => .permission,
+            .question => .question,
+            .auth => .auth,
+        } else .none,
+        .progress = if (report.readOption(.progress)) |p| @intCast(p) else -1,
+        .id = copyZ(&id_buf, report.readOption(.id) orelse ""),
+        .app = copyZ(&app_buf, report.readOption(.app) orelse ""),
+        .title = terminateZ(&title_buf, title_writer.buffered().len),
+        .message = terminateZ(&msg_buf, msg_writer.buffered().len),
+    };
+
+    _ = try self.rt_app.performAction(
+        .{ .surface = self },
+        .program_status,
+        .{ .report = &value },
+    );
+}
+
+/// Copy `src` into `buf` and null-terminate it. `buf` must be longer.
+fn copyZ(buf: []u8, src: []const u8) [*:0]const u8 {
+    @memcpy(buf[0..src.len], src);
+    return terminateZ(buf, src.len);
+}
+
+/// Null-terminate the first `len` bytes already in `buf`.
+fn terminateZ(buf: []u8, len: usize) [*:0]const u8 {
+    buf[len] = 0;
+    return buf[0..len :0].ptr;
+}
+
 /// Called from the app thread to handle mailbox messages to our specific
 /// surface.
 pub fn handleMessage(self: *Surface, msg: Message) !void {
@@ -1113,6 +1177,11 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
                 .pwd,
                 .{ .pwd = str },
             );
+        },
+
+        .program_status => |v| {
+            defer v.data.deinit();
+            try self.programStatus(v.state, v.data.slice());
         },
 
         .close => self.close(),

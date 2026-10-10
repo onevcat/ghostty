@@ -16,6 +16,14 @@ pub const Message = union(enum) {
     /// we want this union to be.
     pub const WriteReq = MessageData(u8, 255);
 
+    /// A program status report (OSC 7501). `data` is the validated
+    /// report body after `7501;`, copied so the io thread can move on.
+    /// The surface decodes it, performs the action, and frees it.
+    pub const ProgramStatus = struct {
+        state: terminal.osc.Command.ProgramStatus.State,
+        data: WriteReq,
+    };
+
     /// A fixed-size desktop notification payload sent to the app thread.
     pub const DesktopNotification = struct {
         /// Desktop notification title.
@@ -139,6 +147,9 @@ pub const Message = union(enum) {
 
     /// Report the progress of an action using a GUI element
     progress_report: terminal.osc.Command.ProgressReport,
+
+    /// The program reported its status (OSC 7501).
+    program_status: ProgramStatus,
 
     /// A command has started in the shell, start a timer.
     start_command,
