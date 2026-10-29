@@ -187,3 +187,37 @@ test "display snapshot preserves background-only cells after reset" {
         try testing.expectEqualStrings("", plain_writer.writer.buffered());
     }
 }
+
+test "display snapshot preserves styled cells without text after reset" {
+    const testing = std.testing;
+    var host = try Terminal.init(std.testing.io, testing.allocator, .{ .cols = 6, .rows = 3 });
+    defer host.deinit(testing.allocator);
+    var source = host.vtStream();
+    defer source.deinit();
+    var client = try Terminal.init(std.testing.io, testing.allocator, .{ .cols = 6, .rows = 3 });
+    defer client.deinit(testing.allocator);
+    var receiver = client.vtStream();
+    defer receiver.deinit();
+
+    // Inserting a line inside left/right margins splits the inverse wide
+    // character: its cells keep the style but lose the codepoint.
+    source.nextSlice("\x1b[7m界\x1b[0m\x1b[?69h\x1b[2;6s\x1b[1;2H\x1b[L");
+    const frame = try alloc(testing.allocator, &host);
+    defer testing.allocator.free(frame);
+    receiver.nextSlice("\x1bc");
+    receiver.nextSlice(frame);
+
+    var inverse_cells: usize = 0;
+    for (0..host.rows) |y| {
+        for (0..host.cols) |x| {
+            const point: @import("point.zig").Point = .{ .active = .{ .x = @intCast(x), .y = @intCast(y) } };
+            const host_cell = host.screens.active.pages.getCell(point).?;
+            const client_cell = client.screens.active.pages.getCell(point).?;
+            const host_inverse = host_cell.style().flags.inverse;
+            if (host_inverse) inverse_cells += 1;
+            try testing.expectEqual(host_inverse, client_cell.style().flags.inverse);
+        }
+    }
+    // Guard the setup: the host must hold styled cells without text.
+    try testing.expect(inverse_cells > 0);
+}

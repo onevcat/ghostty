@@ -1276,10 +1276,11 @@ pub const PageFormatter = struct {
             // If this row is blank, accumulate to avoid a bunch of extra
             // work later. If it isn't blank, make sure we dump all our
             // blanks. In VT a row of cells that only carry a background
-            // (erased while a background color was set) isn't blank,
-            // since dropping it would lose the color.
+            // (erased while a background color was set) or a style (an
+            // inverse cell left when a wide character is split) isn't
+            // blank, since dropping it would lose what the cells show.
             if (!Cell.hasTextAny(cells_subset) and
-                !(emit == .vt and hasBackgroundAny(cells_subset)))
+                !(emit == .vt and hasBackgroundOrStyleAny(cells_subset)))
             {
                 blank_rows += 1;
                 continue;
@@ -2008,11 +2009,13 @@ pub const PageFormatter = struct {
         ) catch return error.WriteFailed;
     }
 
-    /// Whether any of the cells only carries a background color.
-    fn hasBackgroundAny(cells: []const Cell) bool {
+    /// Whether any cell carries a background color or a style. The cell
+    /// loop emits both in styled output, so a VT row without text that has
+    /// one must not be skipped as blank.
+    fn hasBackgroundOrStyleAny(cells: []const Cell) bool {
         for (cells) |*cell| switch (cell.content_tag) {
             .bg_color_palette, .bg_color_rgb => return true,
-            .codepoint, .codepoint_grapheme => {},
+            .codepoint, .codepoint_grapheme => if (cell.hasStyling()) return true,
         };
         return false;
     }
